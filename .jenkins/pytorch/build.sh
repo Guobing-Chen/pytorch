@@ -9,20 +9,6 @@ set -ex
 # shellcheck source=./common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
-if [[ "$BUILD_ENVIRONMENT" == *-clang7-asan* ]]; then
-  exec "$(dirname "${BASH_SOURCE[0]}")/build-asan.sh" "$@"
-fi
-
-if [[ "$BUILD_ENVIRONMENT" == *-mobile-*build* ]]; then
-  exec "$(dirname "${BASH_SOURCE[0]}")/build-mobile.sh" "$@"
-fi
-
-if [[ "$BUILD_ENVIRONMENT" == *deploy* ]]; then
-  # Enabling DEPLOY build (embedded torch python interpreter, experimental)
-  # only on one config for now, can expand later
-  export USE_DEPLOY=ON
-fi
-
 echo "Python version:"
 python --version
 
@@ -47,13 +33,6 @@ fi
 
 if [[ ${BUILD_ENVIRONMENT} == *"caffe2"* || ${BUILD_ENVIRONMENT} == *"onnx"* ]]; then
   export BUILD_CAFFE2=ON
-fi
-
-if [[ ${BUILD_ENVIRONMENT} == *"paralleltbb"* ]]; then
-  export ATEN_THREADING=TBB
-  export USE_TBB=1
-elif [[ ${BUILD_ENVIRONMENT} == *"parallelnative"* ]]; then
-  export ATEN_THREADING=NATIVE
 fi
 
 # TODO: Don't run this...
@@ -168,26 +147,24 @@ if [[ "${BUILD_ENVIRONMENT}" == *clang* ]]; then
   export CXX=clang++
 fi
 
-if [[ "${BUILD_ENVIRONMENT}" == *no-ops* ]]; then
-  export USE_PER_OPERATOR_HEADERS=0
-fi
-
 if [[ "${BUILD_ENVIRONMENT}" == *linux-focal-py3.7-gcc7-build*  ]]; then
   export USE_GLOO_WITH_OPENSSL=ON
 fi
 
+# TODO: this never worked, because this if condition was written incorrectly and
+# never returned true.
 # TODO: Remove after xenial->focal migration
-if [[ "${BUILD_ENVIRONMENT}" == pytorch-linux-xenial-py3* ]]; then
-  if [[ "${BUILD_ENVIRONMENT}" != *android* && "${BUILD_ENVIRONMENT}" != *cuda* ]]; then
-    export BUILD_STATIC_RUNTIME_BENCHMARK=ON
-  fi
-fi
+# if [[ "${BUILD_ENVIRONMENT}" == pytorch-linux-xenial-py3* ]]; then
+#   if [[ "${BUILD_ENVIRONMENT}" != *android* && "${BUILD_ENVIRONMENT}" != *cuda* ]]; then
+#     export BUILD_STATIC_RUNTIME_BENCHMARK=ON
+#   fi
+# fi
 
-if [[ "${BUILD_ENVIRONMENT}" == pytorch-linux-focal-py3* ]]; then
-  if [[ "${BUILD_ENVIRONMENT}" != *android* && "${BUILD_ENVIRONMENT}" != *cuda* ]]; then
-    export BUILD_STATIC_RUNTIME_BENCHMARK=ON
-  fi
-fi
+# if [[ "${BUILD_ENVIRONMENT}" == pytorch-linux-focal-py3* ]]; then
+#   if [[ "${BUILD_ENVIRONMENT}" != *android* && "${BUILD_ENVIRONMENT}" != *cuda* ]]; then
+#     export BUILD_STATIC_RUNTIME_BENCHMARK=ON
+#   fi
+# fi
 
 if [[ "$BUILD_ENVIRONMENT" == *-bazel-* ]]; then
   set -e
@@ -208,11 +185,7 @@ else
   if [[ "$BUILD_ENVIRONMENT" != *libtorch* ]]; then
 
     # rocm builds fail when WERROR=1
-    # XLA test build fails when WERROR=1
-    # set only when building other architectures
-    # or building non-XLA tests.
-    if [[ "$BUILD_ENVIRONMENT" != *rocm*  &&
-          "$BUILD_ENVIRONMENT" != *xla* ]]; then
+    if [[ "$BUILD_ENVIRONMENT" != *rocm* ]]; then
       WERROR=1 python setup.py bdist_wheel
     else
       python setup.py bdist_wheel

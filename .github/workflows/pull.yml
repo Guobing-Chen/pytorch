@@ -18,7 +18,6 @@ jobs:
     name: linux-focal-py3.7-gcc7
     uses: ./.github/workflows/_linux-build.yml
     with:
-      build-environment: linux-focal-py3.7-gcc7
       docker-image-name: pytorch-linux-focal-py3.7-gcc7
 
   linux-focal-py3_7-gcc7-test:
@@ -26,7 +25,6 @@ jobs:
     uses: ./.github/workflows/_linux-test.yml
     needs: linux-focal-py3_7-gcc7-build
     with:
-      build-environment: linux-focal-py3.7-gcc7
       docker-image: ${{ needs.linux-focal-py3_7-gcc7-build.outputs.docker-image }}
       test-matrix: |
         { include: [
@@ -50,30 +48,29 @@ jobs:
     name: linux-focal-py3.7-gcc7-no-ops
     uses: ./.github/workflows/_linux-build.yml
     with:
-      build-environment: linux-focal-py3.7-gcc7-no-ops
       docker-image-name: pytorch-linux-focal-py3.7-gcc7
+      env-variables: |
+        USE_PER_OPERATOR_HEADERS=0
 
   # TODO: remove after full migration off Xenial
   linux-xenial-py3_7-gcc7-build:
     name: linux-xenial-py3.7-gcc7
     uses: ./.github/workflows/_linux-build.yml
     with:
-      build-environment: linux-xenial-py3.7-gcc7
       docker-image-name: pytorch-linux-xenial-py3.7-gcc7
 
   linux-xenial-py3_7-clang7-asan-build:
     name: linux-xenial-py3.7-clang7-asan
     uses: ./.github/workflows/_linux-build.yml
     with:
-      build-environment: linux-xenial-py3.7-clang7-asan
       docker-image-name: pytorch-linux-xenial-py3-clang7-asan
+      script: .jenkins/pytorch/build-asan.sh
 
   linux-xenial-py3_7-clang7-asan-test:
     name: linux-xenial-py3.7-clang7-asan
     uses: ./.github/workflows/_linux-test.yml
     needs: linux-xenial-py3_7-clang7-asan-build
     with:
-      build-environment: linux-xenial-py3.7-clang7-asan
       docker-image: ${{ needs.linux-xenial-py3_7-clang7-asan-build.outputs.docker-image }}
       test-matrix: |
         { include: [
@@ -89,7 +86,6 @@ jobs:
     name: linux-xenial-py3.7-clang7-onnx
     uses: ./.github/workflows/_linux-build.yml
     with:
-      build-environment: linux-xenial-py3.7-clang7-onnx
       docker-image-name: pytorch-linux-xenial-py3-clang7-onnx
 
   linux-xenial-py3_7-clang7-onnx-test:
@@ -97,7 +93,7 @@ jobs:
     uses: ./.github/workflows/_linux-test.yml
     needs: linux-xenial-py3_7-clang7-onnx-build
     with:
-      build-environment: linux-xenial-py3.7-clang7-onnx
+      script: .jenkins/caffe2/test.sh
       docker-image: ${{ needs.linux-xenial-py3_7-clang7-onnx-build.outputs.docker-image }}
       test-matrix: |
         { include: [
@@ -109,7 +105,6 @@ jobs:
     name: linux-bionic-py3.7-clang9
     uses: ./.github/workflows/_linux-build.yml
     with:
-      build-environment: linux-bionic-py3.7-clang9
       docker-image-name: pytorch-linux-bionic-py3.7-clang9
 
   linux-bionic-py3_7-clang9-test:
@@ -117,7 +112,6 @@ jobs:
     uses: ./.github/workflows/_linux-test.yml
     needs: linux-bionic-py3_7-clang9-build
     with:
-      build-environment: linux-bionic-py3.7-clang9
       docker-image: ${{ needs.linux-bionic-py3_7-clang9-build.outputs.docker-image }}
       test-matrix: |
         { include: [
@@ -131,9 +125,9 @@ jobs:
     name: linux-bionic-cuda11.3-py3.7-clang9
     uses: ./.github/workflows/_linux-build.yml
     with:
-      build-environment: linux-bionic-cuda11.3-py3.7-clang9
       docker-image-name: pytorch-linux-bionic-cuda11.3-cudnn8-py3-clang9
 
+  # TODO
   linux-vulkan-bionic-py3_7-clang9-build:
     name: linux-vulkan-bionic-py3.7-clang9
     uses: ./.github/workflows/_linux-build.yml
@@ -157,7 +151,6 @@ jobs:
     name: linux-xenial-cuda11.3-py3.7-gcc7
     uses: ./.github/workflows/_linux-build.yml
     with:
-      build-environment: linux-xenial-cuda11.3-py3.7-gcc7
       docker-image-name: pytorch-linux-xenial-cuda11.3-cudnn8-py3-gcc7
 
   linux-xenial-cuda11_3-py3_7-gcc7-test:
@@ -165,7 +158,6 @@ jobs:
     uses: ./.github/workflows/_linux-test.yml
     needs: linux-xenial-cuda11_3-py3_7-gcc7-build
     with:
-      build-environment: linux-xenial-cuda11.3-py3.7-gcc7
       docker-image: ${{ needs.linux-xenial-cuda11_3-py3_7-gcc7-build.outputs.docker-image }}
       test-matrix: |
         { include: [
@@ -181,31 +173,31 @@ jobs:
     name: linux-xenial-py3-clang5-mobile-build
     uses: ./.github/workflows/_linux-build.yml
     with:
-      build-environment: linux-xenial-py3-clang5-mobile-build
       docker-image-name: pytorch-linux-xenial-py3-clang5-asan
       build-generates-artifacts: false
+      script: .jenkins/pytorch/build-mobile.sh
 
   linux-xenial-py3-clang5-mobile-custom-build-static:
     name: linux-xenial-py3-clang5-mobile-custom-build-static
     uses: ./.github/workflows/_linux-build.yml
     with:
-      build-environment: linux-xenial-py3-clang5-mobile-custom-build-static
       docker-image-name: pytorch-linux-xenial-py3-clang5-android-ndk-r19c
       build-generates-artifacts: false
+      script: .jenkins/pytorch/build-mobile.sh
 
   pytorch-xla-linux-bionic-py3_7-clang8-build:
     name: pytorch-xla-linux-bionic-py3.7-clang8
     uses: ./.github/workflows/_linux-build.yml
     with:
-      build-environment: pytorch-xla-linux-bionic-py3.7-clang8
       docker-image-name: xla_base
+      # XLA test build fails when WERROR=1
+      env-variables: WERROR=0
 
   pytorch-xla-linux-bionic-py3_7-clang8-test:
     name: pytorch-xla-linux-bionic-py3.7-clang8
     uses: ./.github/workflows/_linux-test.yml
     needs: pytorch-xla-linux-bionic-py3_7-clang8-build
     with:
-      build-environment: pytorch-xla-linux-bionic-py3.7-clang8
       docker-image: ${{ needs.pytorch-xla-linux-bionic-py3_7-clang8-build.outputs.docker-image }}
       test-matrix: |
         { include: [
@@ -269,23 +261,23 @@ jobs:
   #   name: linux-focal-py3.7-gcc7-mobile-lightweight-dispatch-build
   #   uses: ./.github/workflows/_linux-build.yml
   #   with:
-  #     build-environment: linux-focal-py3.7-gcc7-mobile-lightweight-dispatch-build
   #     docker-image-name: pytorch-linux-focal-py3.7-gcc7
   #     build-generates-artifacts: false
+  #     script: .jenkins/pytorch/build-mobile.sh
 
   deploy-linux-xenial-cuda11_3-py3_7-gcc7-build:
     name: deploy-linux-xenial-cuda11.3-py3.7-gcc7
     uses: ./.github/workflows/_linux-build.yml
     with:
-      build-environment: deploy-linux-xenial-cuda11.3-py3.7-gcc7
       docker-image-name: pytorch-linux-xenial-cuda11.3-cudnn8-py3-gcc7
+      env-variables: USE_DEPLOY=1
 
   deploy-linux-xenial-cuda11_3-py3_7-gcc7-test:
     name: linux-xenial-cuda11.3-py3.7-gcc7
     uses: ./.github/workflows/_linux-test.yml
     needs: deploy-linux-xenial-cuda11_3-py3_7-gcc7-build
     with:
-      build-environment: deploy-linux-xenial-cuda11.3-py3.7-gcc7
+      script: .jenkins/pytorch/test-deploy.sh
       docker-image: ${{ needs.deploy-linux-xenial-cuda11_3-py3_7-gcc7-build.outputs.docker-image }}
       test-matrix: |
         { include: [
