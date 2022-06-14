@@ -102,12 +102,26 @@ bool isSupported(Node* node) {
       "aten::cat(Tensor[] tensors, int dim=0) -> Tensor",
       "aten::unsqueeze(Tensor(a) self, int dim) -> Tensor(a)",
   };
+
+  static const OperatorSet supported_quantization_set{
+      "aten::quantize_per_tensor.tensor_qparams(Tensor self, Tensor scale, Tensor zero_point, ScalarType dtype) -> Tensor",
+      "aten::dequantize.self(Tensor self) -> Tensor",
+      "quantized::add(Tensor qa, Tensor qb, float scale, int zero_point) -> Tensor qc",
+      "quantized::mul(Tensor qa, Tensor qb, float scale, int zero_point)-> Tensor qc",
+      "quantized::matmul(Tensor qa, Tensor qb, float scale, int zero_point)-> Tensor qc",
+//      "quantized::add_relu(Tensor qa, Tensor qb, float scale, int zero_point) -> Tensor qc",
+      "quantized::conv2d.new(Tensor qx, __torch__.torch.classes.quantized.Conv2dPackedParamsBase packed_weight, float output_scale, int output_zero_point) -> (Tensor)",
+      "quantized::conv2d_relu.new(Tensor qx, __torch__.torch.classes.quantized.Conv2dPackedParamsBase packed_weight, float output_scale, int output_zero_point) -> (Tensor)",
+      "quantized::linear(Tensor X, __torch__.torch.classes.quantized.LinearPackedParamsBase W_prepack, float Y_scale_i, int Y_zero_point_i) -> (Tensor Y)",
+      "quantized::linear_relu(Tensor X, __torch__.torch.classes.quantized.LinearPackedParamsBase W_prepack, float Y_scale_i, int Y_zero_point_i) -> (Tensor Y)",
+  };
   // clang-format on
 
   if (get_tensorexpr_elementwise_set().contains(node) ||
       node->isMemberOf(supported_non_eltwise_set()) ||
       node->isMemberOf(supported_misc_set) ||
       node->isMemberOf(getCustomOperatorSet()) ||
+      node->isMemberOf(supported_quantization_set) ||
       (texpr_reductions_enabled && node->isMemberOf(supported_reduction_set))) {
     // We only insert guards on Tensor types, so we rely on the output
     // of a node being uniquely determined by its input types.
@@ -1079,7 +1093,7 @@ class TensorExprFuser {
           // All tensor types should be known.
           return false;
         }
-        if (c10::isComplexType(*st) || c10::isQIntType(*st)) {
+        if (c10::isComplexType(*st)) {
           return false;
         }
       }

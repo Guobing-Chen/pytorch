@@ -1566,6 +1566,10 @@ void TensorExprKernel::optimizeOwningGraph() {
   // Optimize the concatenation
   OptimizeCat(graph_);
 
+  GRAPH_DUMP("Before DecomposeOps:", graph_);
+  DecomposeOps(graph_);
+  GRAPH_DUMP("After DecomposeOps:", graph_);
+
   // Synchronize the symbolic strides information
   auto graph_outputs = graph_->outputs();
   TORCH_INTERNAL_ASSERT(graph_outputs.size() == _orignal_graph_outputs.size());
@@ -1662,12 +1666,16 @@ void TensorExprKernel::compile() {
           c10::TensorOptions(tensorType(bufs_.at(output))).device(device_));
       tensorOutputSizes_.emplace_back();
       tensorOutputStrides_.emplace_back();
+      tensorOutputQscales_.emplace_back();
+      tensorOutputQzeros_.emplace_back();
+      isOutputQuantized_.push_back(false);
       isOutputScalar_.push_back(true);
       bufs_.erase(output);
       continue;
     }
 
     const auto& tt = output->type()->expect<TensorType>();
+    BufPtr outputBufPtr = nullptr;
     if (has_symbolic_shapes_) {
       auto sizes = sizesFromSymbolicShape(tt->symbolic_sizes());
       tensorOutputSymbolicSizes_.push_back(sizes);
@@ -1678,6 +1686,7 @@ void TensorExprKernel::compile() {
       tensorOutputStrideDesc_.push_back(stride_desc);
       Tensor properly_strided_output =
           convertSymbolicOutputToCorrectStrides(output);
+      outputBufPtr = properly_strided_output.buf();
       if (properly_strided_output.stmt()) {
         block->append_stmt(properly_strided_output.stmt());
       }
@@ -1688,6 +1697,7 @@ void TensorExprKernel::compile() {
       // strides at the end of the kernel (if already contiguous it's a no-op)
       Tensor properly_strided_output =
           convertStaticShapeOutputToCorrectStrides(output);
+      outputBufPtr = properly_strided_output.buf();
       if (properly_strided_output.stmt()) {
         block->append_stmt(properly_strided_output.stmt());
       }
@@ -1704,6 +1714,18 @@ void TensorExprKernel::compile() {
       } else {
         tensorOutputStrides_.push_back(TensorType::contiguousStridesOf(sizes));
       }
+    }
+
+    if (outputBufPtr->qscale()) {
+      double qscale = to<DoubleImm>(IRSimplifier::simplify(outputBufPtr->qscale()))->value();
+      int64_t qzero = to<LongImm>(IRSimplifier::simplify(outputBufPtr->qzero()))->value();
+      tensorOutputQscales_.push_back(qscale);
+      tensorOutputQzeros_.push_back(qzero);
+      isOutputQuantized_.push_back(true);
+    } else {
+      tensorOutputQscales_.emplace_back();
+      tensorOutputQzeros_.emplace_back();
+      isOutputQuantized_.push_back(false);
     }
 
     bufOutputs_.insert(bufs_.at(output));
@@ -1872,25 +1894,47 @@ std::vector<CodeGen::CallArg> TensorExprKernel::prepareRunArgs(
 
     for (size_t i = 0, e = bufOutputs_.size(); i < e; ++i) {
       auto const& opts = tensorOutputTensorOptions_[i];
-      outputs.emplace_back(codegen_->empty_strided(
-          static_sizes[i],
-          static_strides[i],
-          opts.dtype,
-          opts.layout,
-          opts.device,
-          opts.pinned_memory));
+      if (isOutputQuantized_[i]) {
+        outputs.emplace_back(codegen_->empty_strided_quantized(
+            static_sizes[i],
+            opts.dtype,
+            opts.layout,
+            opts.device,
+            opts.pinned_memory,
+            tensorOutputQscales_[i],
+            tensorOutputQzeros_[i]));
+      } else {
+        outputs.emplace_back(codegen_->empty_strided(
+            static_sizes[i],
+            static_strides[i],
+            opts.dtype,
+            opts.layout,
+            opts.device,
+            opts.pinned_memory));
+      }
       runArgs.emplace_back(outputs.back().data_ptr());
     }
   } else {
     for (size_t i = 0, e = bufOutputs_.size(); i < e; ++i) {
       auto const& opts = tensorOutputTensorOptions_[i];
-      outputs.emplace_back(codegen_->empty_strided(
-          tensorOutputSizes_[i],
-          tensorOutputStrides_[i],
-          opts.dtype,
-          opts.layout,
-          opts.device,
-          opts.pinned_memory));
+      if (isOutputQuantized_[i]) {
+        outputs.emplace_back(codegen_->empty_strided_quantized(
+            tensorOutputSizes_[i],
+            opts.dtype,
+            opts.layout,
+            opts.device,
+            opts.pinned_memory,
+            tensorOutputQscales_[i],
+            tensorOutputQzeros_[i]));
+      } else {
+        outputs.emplace_back(codegen_->empty_strided(
+            tensorOutputSizes_[i],
+            tensorOutputStrides_[i],
+            opts.dtype,
+            opts.layout,
+            opts.device,
+            opts.pinned_memory));
+      }
       runArgs.emplace_back(outputs.back().data_ptr());
     }
   }

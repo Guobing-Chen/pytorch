@@ -305,8 +305,11 @@ class TORCH_API TensorExprKernel {
   std::vector<CodeGen::BufferArg> bufferArgs_;
   std::vector<std::vector<int64_t>> tensorOutputSizes_;
   std::vector<std::vector<int64_t>> tensorOutputStrides_;
+  std::vector<double>               tensorOutputQscales_;
+  std::vector<int64_t>              tensorOutputQzeros_;
   std::vector<torch::jit::StrideInput> tensorOutputStrideDesc_;
   std::vector<bool> isOutputScalar_;
+  std::vector<bool> isOutputQuantized_;
   std::vector<UnpackedTensorOptions> tensorOutputTensorOptions_;
   std::unordered_set<BufPtr> bufOutputs_;
   std::unordered_map<const torch::jit::Value*, BufPtr> bufs_;
