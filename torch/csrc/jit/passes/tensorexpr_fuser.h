@@ -25,6 +25,8 @@ TORCH_API void setTensorExprDynamicShapeFusionEnabled(bool val);
 TORCH_API bool tensorExprDynamicShapeFusionEnabled();
 TORCH_API bool setTexprReductionsEnabled(bool value);
 TORCH_API bool texprReductionsEnabled();
+TORCH_API bool setTexprQuantEnabled(bool value);
+TORCH_API bool texprQuantEnabled();
 
 TORCH_API void RemoveProfileNodesAndSpecializeTypes(
     std::shared_ptr<Graph>& graph);

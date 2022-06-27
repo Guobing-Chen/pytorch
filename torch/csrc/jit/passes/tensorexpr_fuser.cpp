@@ -40,6 +40,7 @@ namespace torch {
 namespace jit {
 
 static bool texpr_reductions_enabled = false;
+static bool texpr_quant_enabled = false;
 
 bool isSupportedForBlock(Node* node) {
   switch (node->kind()) {
@@ -86,6 +87,24 @@ static const OperatorSet& supported_non_eltwise_set() {
   return supported_non_eltwise_set;
 };
 
+static const OperatorSet& supported_quantization_set() {
+  // clang-format off
+  static const OperatorSet supported_quantization_set{
+      "aten::quantize_per_tensor.tensor_qparams(Tensor self, Tensor scale, Tensor zero_point, ScalarType dtype) -> Tensor",
+      "aten::dequantize.self(Tensor self) -> Tensor",
+      "quantized::add(Tensor qa, Tensor qb, float scale, int zero_point) -> Tensor qc",
+      "quantized::mul(Tensor qa, Tensor qb, float scale, int zero_point)-> Tensor qc",
+      "quantized::matmul(Tensor qa, Tensor qb, float scale, int zero_point)-> Tensor qc",
+      "quantized::add_relu(Tensor qa, Tensor qb, float scale, int zero_point) -> Tensor qc",
+      "quantized::conv2d.new(Tensor qx, __torch__.torch.classes.quantized.Conv2dPackedParamsBase packed_weight, float output_scale, int output_zero_point) -> (Tensor)",
+      "quantized::conv2d_relu.new(Tensor qx, __torch__.torch.classes.quantized.Conv2dPackedParamsBase packed_weight, float output_scale, int output_zero_point) -> (Tensor)",
+      "quantized::linear(Tensor X, __torch__.torch.classes.quantized.LinearPackedParamsBase W_prepack, float Y_scale_i, int Y_zero_point_i) -> (Tensor Y)",
+      "quantized::linear_relu(Tensor X, __torch__.torch.classes.quantized.LinearPackedParamsBase W_prepack, float Y_scale_i, int Y_zero_point_i) -> (Tensor Y)",
+  };
+  // clang-format on
+  return supported_quantization_set;
+};
+
 bool isSupported(Node* node) {
   // For Block codegen we allow limited ops.
   if (tensorexpr::getTEGenerateBlockCode()) {
@@ -102,12 +121,14 @@ bool isSupported(Node* node) {
       "aten::cat(Tensor[] tensors, int dim=0) -> Tensor",
       "aten::unsqueeze(Tensor(a) self, int dim) -> Tensor(a)",
   };
+
   // clang-format on
 
   if (get_tensorexpr_elementwise_set().contains(node) ||
       node->isMemberOf(supported_non_eltwise_set()) ||
       node->isMemberOf(supported_misc_set) ||
       node->isMemberOf(getCustomOperatorSet()) ||
+      (texpr_quant_enabled && node->isMemberOf(supported_quantization_set())) ||
       (texpr_reductions_enabled && node->isMemberOf(supported_reduction_set))) {
     // We only insert guards on Tensor types, so we rely on the output
     // of a node being uniquely determined by its input types.
@@ -180,8 +201,18 @@ bool setTexprReductionsEnabled(bool value) {
   return old_value;
 }
 
+bool setTexprQuantEnabled(bool value) {
+  bool old_value = texpr_quant_enabled;
+  texpr_quant_enabled = value;
+  return old_value;
+}
+
 bool texprReductionsEnabled() {
   return texpr_reductions_enabled;
+}
+
+bool texprQuantEnabled() {
+  return texpr_quant_enabled;
 }
 
 void removeProfileNodesAndSpecializeTypes(Block* b) {
@@ -489,7 +520,8 @@ class TensorExprFuser {
       // non-elementwise like batch_norm, conv, matmul, and
       // a few exceptions (e.g. prim::ConstantChunk, etc) listed above
       if (!(get_tensorexpr_elementwise_set().contains(n)) &&
-          !n->isMemberOf(tensorexpr::supported_non_eltwise_set())) {
+          !n->isMemberOf(tensorexpr::supported_non_eltwise_set()) &&
+          !n->isMemberOf(tensorexpr::supported_quantization_set())) {
         continue;
       }
 
@@ -1079,7 +1111,7 @@ class TensorExprFuser {
           // All tensor types should be known.
           return false;
         }
-        if (c10::isComplexType(*st) || c10::isQIntType(*st)) {
+        if (c10::isComplexType(*st)) {
           return false;
         }
       }

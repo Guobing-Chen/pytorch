@@ -53,6 +53,16 @@ class TORCH_API LLVMCodeGen : public CodeGen {
       c10::optional<c10::Device> device_opt,
       c10::optional<bool> pin_memory_opt) override;
 
+at::Tensor empty_strided_quantized(
+    c10::IntArrayRef size,
+    c10::optional<c10::ScalarType> dtype_opt,
+    c10::optional<c10::Layout> layout_opt,
+    c10::optional<c10::Device> device_opt,
+    c10::optional<bool> pin_memory_opt,
+    double scale,
+    int64_t zero_point,
+    c10::optional<c10::MemoryFormat> optional_memory_format) override;
+
   template <typename T>
   T value() {
     return value<T>(nullptr);

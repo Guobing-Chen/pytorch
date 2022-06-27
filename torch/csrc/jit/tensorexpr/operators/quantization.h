@@ -16,6 +16,36 @@ TORCH_API ScalarType immQDType(const BufHandle& qx);
 
 TORCH_API bool isQuantized(const BufHandle& qx);
 
+TORCH_API bool isChannelsLast(const BufHandle& buf);
+
+TORCH_API BufHandle makeQBufHandleContiguous(
+    const std::string& name,
+    const std::vector<ExprHandle>& dims,
+    Dtype dtype,
+    const double qscale,
+    const int64_t qzero);
+
+TORCH_API BufHandle makeQBufHandleContiguous(
+    const std::string& name,
+    const std::vector<ExprHandle>& dims,
+    Dtype dtype,
+    const ExprPtr qscale,
+    const ExprPtr qzero);
+
+TORCH_API BufHandle makeQBufHandleChannelsLast(
+    const std::string& name,
+    const std::vector<ExprHandle>& dims,
+    Dtype dtype,
+    const double qscale,
+    const int64_t qzero);
+
+TORCH_API BufHandle makeQBufHandleChannelsLast(
+    const std::string& name,
+    const std::vector<ExprHandle>& dims,
+    Dtype dtype,
+    const ExprPtr qscale,
+    const ExprPtr qzero);
+
 TORCH_API Tensor computeQuantizePerTensor(
     const std::vector<ArgValue>& inputs,
     const std::vector<ExprHandle>& outputShape,
