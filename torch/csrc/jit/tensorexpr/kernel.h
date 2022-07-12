@@ -233,7 +233,7 @@ class TORCH_API TensorExprKernel {
       std::vector<at::Tensor>& outputs) const;
   BackendType inferBackendTypeFromDevice(at::Device device);
 
-  Tensor bindInput(const torch::jit::Value* input, size_t & runArgs_idx);
+  Tensor bindInput(const torch::jit::Value* input);
   BlockPtr bindAllInputs();
 
   // Deduce the memory layout policy to be propagated within

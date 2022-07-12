@@ -1006,7 +1006,7 @@ std::vector<ExprHandle> TensorExprKernel::getInputStrides(
   return inputTensorStrides;
 }
 
-Tensor TensorExprKernel::bindInput(const torch::jit::Value* input, size_t & runArgs_idx) {
+Tensor TensorExprKernel::bindInput(const torch::jit::Value* input) {
   auto const& t = input->type();
   auto const& outputs = input->owningGraph()->outputs();
   std::unordered_set<const Value*> outputs_set(outputs.begin(), outputs.end());
@@ -1038,14 +1038,13 @@ Tensor TensorExprKernel::bindInput(const torch::jit::Value* input, size_t & runA
   auto setQinfoAsNeeded = [&](c10::TensorTypePtr tt, BufHandle inBuffer) {
     auto scalarType = tt->scalarType();
     if (scalarType == at::ScalarType::QInt8 || scalarType == at::ScalarType::QUInt8) {
+      qtensorInputIndex_.emplace(input_name_map_[input] + "_scale", bufferArgs_.size());
       VarHandle scale(input_name_map_[input] + "_scale", kDouble);
       bufferArgs_.emplace_back(scale);
       VarHandle zero_point(input_name_map_[input] + "_zero", kLong);
       bufferArgs_.emplace_back(zero_point);
       inBuffer.node()->set_qscale(scale.node());
       inBuffer.node()->set_qzero(zero_point.node());
-      qtensorInputIndex_.emplace(input_name_map_[input] + "_scale", runArgs_idx);
-      runArgs_idx += 2;
     }
   };
 
@@ -1476,11 +1475,9 @@ BlockPtr TensorExprKernel::bindAllInputs() {
   auto block = alloc<Block>(std::vector<StmtPtr>({}));
 
   // Process the inputs before the symbolic input params.
-  size_t runArgs_idx = 0;
   for (const auto i : c10::irange(symbolic_shape_inputs_start_pos)) {
     auto input = graph_->inputs()[i];
-    Tensor t = bindInput(input, runArgs_idx);
-    runArgs_idx++;
+    Tensor t = bindInput(input);
     if (t.stmt()) {
       block->append_stmt(t.stmt());
     }

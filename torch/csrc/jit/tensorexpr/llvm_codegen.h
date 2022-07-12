@@ -61,7 +61,7 @@ at::Tensor empty_strided_quantized(
     c10::optional<bool> pin_memory_opt,
     double scale,
     int64_t zero_point,
-    c10::optional<c10::MemoryFormat> optional_memory_format) override;
+    c10::optional<c10::MemoryFormat> memory_format_opt) override;
 
   template <typename T>
   T value() {
