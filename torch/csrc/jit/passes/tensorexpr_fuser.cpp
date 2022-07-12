@@ -76,21 +76,11 @@ OperatorSet& getCustomOperatorSet() {
   return _g_custom_operator_set;
 }
 
-static const OperatorSet& supported_non_eltwise_set() {
+OperatorSet& getQuantizationOperatorSet() {
   // clang-format off
-  static const OperatorSet supported_non_eltwise_set{
-      "aten::batch_norm(Tensor input, Tensor? weight, Tensor? bias, Tensor? running_mean, Tensor? running_var, bool training, float momentum, float eps, bool cudnn_enabled) -> Tensor",
-      "aten::conv2d(Tensor input, Tensor weight, Tensor? bias=None, int[2] stride=1, int[2] padding=0, int[2] dilation=1, int groups=1) -> Tensor",
-      "aten::matmul(Tensor self, Tensor other) -> Tensor",
-  };
-  // clang-format on
-  return supported_non_eltwise_set;
-};
-
-static const OperatorSet& supported_quantization_set() {
-  // clang-format off
-  static const OperatorSet supported_quantization_set{
+  static OperatorSet _g_supported_quantization_set{
       "aten::quantize_per_tensor.tensor_qparams(Tensor self, Tensor scale, Tensor zero_point, ScalarType dtype) -> Tensor",
+      "aten::quantize_per_tensor(Tensor self, float scale, int zero_point, ScalarType dtype) -> Tensor",
       "aten::dequantize.self(Tensor self) -> Tensor",
       "quantized::add(Tensor qa, Tensor qb, float scale, int zero_point) -> Tensor qc",
       "quantized::mul(Tensor qa, Tensor qb, float scale, int zero_point)-> Tensor qc",
@@ -102,7 +92,18 @@ static const OperatorSet& supported_quantization_set() {
       "quantized::linear_relu(Tensor X, __torch__.torch.classes.quantized.LinearPackedParamsBase W_prepack, float Y_scale_i, int Y_zero_point_i) -> (Tensor Y)",
   };
   // clang-format on
-  return supported_quantization_set;
+  return _g_supported_quantization_set;
+};
+
+static const OperatorSet& supported_non_eltwise_set() {
+  // clang-format off
+  static const OperatorSet supported_non_eltwise_set{
+      "aten::batch_norm(Tensor input, Tensor? weight, Tensor? bias, Tensor? running_mean, Tensor? running_var, bool training, float momentum, float eps, bool cudnn_enabled) -> Tensor",
+      "aten::conv2d(Tensor input, Tensor weight, Tensor? bias=None, int[2] stride=1, int[2] padding=0, int[2] dilation=1, int groups=1) -> Tensor",
+      "aten::matmul(Tensor self, Tensor other) -> Tensor",
+  };
+  // clang-format on
+  return supported_non_eltwise_set;
 };
 
 bool isSupported(Node* node) {
@@ -128,7 +129,7 @@ bool isSupported(Node* node) {
       node->isMemberOf(supported_non_eltwise_set()) ||
       node->isMemberOf(supported_misc_set) ||
       node->isMemberOf(getCustomOperatorSet()) ||
-      (texpr_quant_enabled && node->isMemberOf(supported_quantization_set())) ||
+      (texpr_quant_enabled && node->isMemberOf(getQuantizationOperatorSet())) ||
       (texpr_reductions_enabled && node->isMemberOf(supported_reduction_set))) {
     // We only insert guards on Tensor types, so we rely on the output
     // of a node being uniquely determined by its input types.
@@ -521,7 +522,7 @@ class TensorExprFuser {
       // a few exceptions (e.g. prim::ConstantChunk, etc) listed above
       if (!(get_tensorexpr_elementwise_set().contains(n)) &&
           !n->isMemberOf(tensorexpr::supported_non_eltwise_set()) &&
-          !n->isMemberOf(tensorexpr::supported_quantization_set())) {
+          !n->isMemberOf(tensorexpr::getQuantizationOperatorSet())) {
         continue;
       }
 

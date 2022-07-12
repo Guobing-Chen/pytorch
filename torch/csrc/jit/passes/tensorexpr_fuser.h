@@ -74,6 +74,11 @@ TORCH_API bool isSupported(Node* node);
 /// @return Reference of the custome operator set
 ///
 TORCH_API OperatorSet& getCustomOperatorSet();
+
+/// Get the modifiable quantization operator set object.
+/// @return Reference of the quantization operator set
+///
+TORCH_API OperatorSet& getQuantizationOperatorSet();
 } // namespace tensorexpr
 } // namespace jit
 } // namespace torch
