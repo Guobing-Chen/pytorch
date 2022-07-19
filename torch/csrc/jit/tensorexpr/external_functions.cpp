@@ -1320,7 +1320,7 @@ void nnc_aten_adaptive_avg_pool2d_out(
 
   at::Tensor r;
   try {
-    r = at::adaptive_avg_pool2d(tensors[1], {extra_args[3], extra_args[4]});
+    r = at::adaptive_avg_pool2d(tensors[1], /*{H, W}*/{extra_args[3], extra_args[4]});
   } catch (...) {
   }
 
