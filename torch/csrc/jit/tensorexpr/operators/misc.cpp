@@ -658,6 +658,81 @@ Tensor computeEmbedding(
     const std::vector<ExprHandle>& outputStrides,
     const c10::optional<ScalarType>& outputType,
     at::Device device) {
+  Dtype output_dtype = kFloat;
+  if (outputType) {
+    output_dtype = Dtype(*outputType);
+  }
+
+  BufHandle output_buf("emb", outputShape, output_dtype);
+  const BufHandle& w = c10::get<BufHandle>(inputs[0]);
+  const BufHandle& indices = c10::get<BufHandle>(inputs[1]);
+
+  auto w_dims = ExprVectorToExprHandleVector(w.node()->dims());
+  auto indices_dims = ExprVectorToExprHandleVector(indices.node()->dims());
+  auto output_rank = indices_dims.size() + 1;
+
+  // Prepare for-loop vars and store indices
+  std::vector<VarPtr> for_vars(output_rank);
+  std::vector<ExprPtr> store_indices(output_rank);
+  for (int64_t i = 0; i < output_rank - 1; ++i) {
+    for_vars[i] = alloc<Var>("i_" + c10::to_string(i), indices_dims[i].dtype());
+    store_indices[i] = for_vars[i];
+  }
+  for_vars[output_rank - 1] =
+      alloc<Var>("i_" + c10::to_string(output_rank - 1), w_dims[1].dtype());
+  store_indices[output_rank - 1] = for_vars[output_rank - 1];
+
+  // Prepare load indices for weight indexing from indices tensor
+  std::vector<ExprPtr> w_idx_load_indices(indices_dims.size());
+  for (int64_t i = 0; i < indices_dims.size(); ++i) {
+    w_idx_load_indices[i] = for_vars[i];
+  }
+
+  // Generate stmt for weight indices
+  VarPtr w_idx_var = alloc<Var>("w_idx_var", w_dims[0].dtype());
+  auto load_w_idx = alloc<Load>(indices.node(), w_idx_load_indices);
+  StmtPtr w_idx_stmt = Let::make(
+      VarHandle(w_idx_var),
+      promoteToDtype(ExprHandle(load_w_idx), w_dims[0].dtype().scalar_type()));
+  auto block = alloc<tensorexpr::Block>(std::vector<StmtPtr>({w_idx_stmt}));
+
+  // Prepare load indices for weight
+  std::vector<ExprPtr> w_load_indices(2);
+  w_load_indices[0] = w_idx_var;
+  w_load_indices[1] = for_vars[output_rank - 1];
+
+  // Generate stmt for output loading together with the inner-most for-loop
+  auto load_w = promoteToDtype(
+      ExprHandle(alloc<Load>(w.node(), w_load_indices)),
+      output_dtype.scalar_type());
+  StmtPtr output_stmt =
+      alloc<Store>(output_buf.node(), store_indices, load_w.node());
+  output_stmt = alloc<For>(
+      for_vars[output_rank - 1],
+      immLike(w_dims[1], 0),
+      w_dims[1].node(),
+      output_stmt);
+  block->append_stmt(output_stmt);
+
+  // Generate the outer for-loops based on the inner-most for-loop
+  StmtPtr st = IRSimplifier::simplify(block);
+  for (size_t i = output_rank - 1; i > 0; --i) {
+    st = alloc<For>(
+        for_vars[i - 1],
+        immLike(indices_dims[i - 1], 0),
+        indices_dims[i - 1].node(),
+        st);
+  }
+
+  return Tensor(output_buf.node(), st);
+}
+
+Tensor computeEmbeddingExternalCall(
+    const std::vector<ArgValue>& inputs,
+    const std::vector<ExprHandle>& outputShape,
+    const std::vector<ExprHandle>& outputStrides,
+    const c10::optional<ScalarType>& outputType,
+    at::Device device) {
   Dtype dtype = kFloat;
   if (outputType) {
     dtype = Dtype(*outputType);
