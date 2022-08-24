@@ -3,6 +3,7 @@
 #include <torch/csrc/jit/tensorexpr/expr.h>
 #include <torch/csrc/jit/tensorexpr/loopnest.h>
 #include <torch/csrc/jit/tensorexpr/operators/operators.h>
+#include <torch/csrc/jit/ir/irparser.h>
 #include <torch/torch.h>
 
 using namespace torch::jit::tensorexpr;
@@ -75,4 +76,65 @@ TEST(Ops, ChannelsLastSum) {
 
     ASSERT_TRUE(at::allclose(bt, ref));
   }
+}
+
+TEST(Ops, LinearWithBias) {
+  const auto graph_string = R"IR(
+    graph(%x : Float(1, 16, strides=[16, 1], device=cpu),
+          %w : Float(8, 16, strides=[16, 1], device=cpu),
+          %b : Float(8, strides=[1], device=cpu)):
+      %1 : Float(1, 8, strides=[8, 1], device=cpu) = aten::linear(%x, %w, %b)
+      return (%1))IR";
+  auto graph = std::make_shared<torch::jit::Graph>();
+  parseIR(graph_string, &*graph);
+
+  auto x = at::rand({1, 16}, at::TensorOptions(c10::kCPU).dtype(at::kFloat));
+  auto w = at::rand({8, 16}, at::TensorOptions(c10::kCPU).dtype(at::kFloat));
+  auto b = at::rand({8}, at::TensorOptions(c10::kCPU).dtype(at::kFloat));
+  auto y_expected = at::linear(x, w, b);
+
+  TensorExprKernel k(graph);
+  std::vector<at::Tensor> inputs = {x, w, b};
+
+  std::vector<c10::IValue> stack = at::fmap<c10::IValue>(inputs);
+  k.run(stack);
+  auto y = stack[0].toTensor();
+
+  bool check = at::allclose(y_expected, y);
+  if(!check) {
+    std::cout << "x:\n" << x << std::endl;
+    std::cout << "y_expected:\n" << y_expected << std::endl;
+    std::cout << "y:\n" << y << std::endl;
+  }
+  TORCH_CHECK_EQ(check, 1);
+}
+
+TEST(Ops, LinearWithoutBias) {
+  const auto graph_string = R"IR(
+    graph(%x : Float(1, 16, strides=[16, 1], device=cpu),
+          %w : Float(8, 16, strides=[16, 1], device=cpu)):
+      %1 : NoneType = prim::Constant()
+      %2 : Float(1, 8, strides=[8, 1], device=cpu) = aten::linear(%x, %w, %1)
+      return (%2))IR";
+  auto graph = std::make_shared<torch::jit::Graph>();
+  parseIR(graph_string, &*graph);
+
+  auto x = at::rand({1, 16}, at::TensorOptions(c10::kCPU).dtype(at::kFloat));
+  auto w = at::rand({8, 16}, at::TensorOptions(c10::kCPU).dtype(at::kFloat));
+  auto y_expected = at::linear(x, w);
+
+  TensorExprKernel k(graph);
+  std::vector<at::Tensor> inputs = {x, w};
+
+  std::vector<c10::IValue> stack = at::fmap<c10::IValue>(inputs);
+  k.run(stack);
+  auto y = stack[0].toTensor();
+
+  bool check = at::allclose(y_expected, y);
+  if(!check) {
+    std::cout << "x:\n" << x << std::endl;
+    std::cout << "y_expected:\n" << y_expected << std::endl;
+    std::cout << "y:\n" << y << std::endl;
+  }
+  TORCH_CHECK_EQ(check, 1);
 }
