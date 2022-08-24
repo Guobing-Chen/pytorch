@@ -42,6 +42,31 @@ ExprHandle scalarOrConstant(const ArgValue& v);
 ExprHandle broadcast(BufHandle b, const std::vector<ExprHandle>& axes);
 ExprHandle constant(const ArgValue& v);
 
+// Infrastructure to provide indirect-indexing related lowering. It helps
+// generating the overall loop-nest for the Op and indirect-indexing related
+// logic, while leaving Op-specific logic to be defined by Op with injected
+// function. E.x.: take a 2D indices and a 3D target (to be indirect indexing),
+// and the 2nd dim is the dim to be indirect-indexing for i : size_i
+//   for j : size_j
+//     x = indices[i, j]
+//     for m : size_m
+//       for n : size_n
+//         innerStmt by Op with innerStmtFunc(idxingTarget[m, x, n], [i, j, m,
+//         n])
+StmtPtr computeIndirectIndexing(
+    size_t posOfIndices, // Position of indices in inputs
+    size_t posOfIdxingTarget, // Position of target (to be indirect indexing) in
+                              // inputs
+    size_t dimOfIndirectIdxing, // Indirect indexing dim of target
+    const std::vector<ArgValue>& inputs, // Original lowering input
+    const std::vector<ExprHandle>& outputShape, // Original lowering outputShape
+    const std::function<StmtPtr(
+        const ExprPtr&, // Loaded IdxingTarget
+        const std::vector<ExprPtr>& // Loop-nest Indices
+        )>& innerStmtFunc // OP-specific customization for inner-most loop body
+                          // generation
+);
+
 ExprHandle clamp(
     const ExprHandle& cmin,
     const ExprHandle& cmax,

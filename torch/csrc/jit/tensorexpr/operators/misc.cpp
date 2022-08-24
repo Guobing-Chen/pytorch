@@ -351,6 +351,85 @@ Tensor computeChunk(
       });
 }
 
+StmtPtr computeIndirectIndexing(
+    size_t posOfIndices,
+    size_t posOfIdxingTarget,
+    size_t dimOfIndirectIdxing,
+    const std::vector<ArgValue>& inputs,
+    const std::vector<ExprHandle>& outputShape,
+    const std::function<StmtPtr(const ExprPtr&, const std::vector<ExprPtr>&)>&
+        innerStmtFunc) {
+  const BufHandle& indices = c10::get<BufHandle>(inputs[posOfIndices]);
+  const BufHandle& idxingTarget =
+      c10::get<BufHandle>(inputs[posOfIdxingTarget]);
+
+  auto outputRank = outputShape.size();
+  auto indicesRank = indices.node()->dims().size();
+  auto dtypeIndirectIdxing =
+      idxingTarget.node()->dims().at(dimOfIndirectIdxing)->dtype();
+
+  // Generate loop-nest indices
+  std::vector<VarPtr> loopVars(outputRank);
+  std::vector<ExprPtr> loopIndices(outputRank);
+  for (size_t i = 0; i < outputRank; ++i) {
+    loopVars[i] = alloc<Var>("i_" + c10::to_string(i), outputShape[i].dtype());
+    loopIndices[i] = loopVars[i];
+  }
+
+  // Generate indirect-indexing load expr: indices[...]
+  std::vector<ExprPtr> indirectIdxLoadIndices(indicesRank);
+  for (size_t i = 0; i < indicesRank; ++i) {
+    indirectIdxLoadIndices[i] = loopIndices[i];
+  }
+  auto loadIndirectIdx = alloc<Load>(indices.node(), indirectIdxLoadIndices);
+
+  // Generate indirect-indexing var: x
+  auto indirectIdxVar = alloc<Var>("ind_idx", dtypeIndirectIdxing);
+
+  // Generate target load with indirect-indexing: idxingTarget[..., x, ...]
+  std::vector<ExprPtr> idxingTargetIndices;
+  for (size_t i = 0, idxLoopIndices = indicesRank; i < indicesRank; ++i) {
+    idxingTargetIndices.push_back(
+        (i == dimOfIndirectIdxing) ? indirectIdxVar
+                                   : loopIndices[idxLoopIndices++]);
+  }
+  auto loadIdxingTarget = alloc<Load>(idxingTarget.node(), idxingTargetIndices);
+
+  // Generate stmt for the inner-most loop body
+  StmtPtr innerStmt = innerStmtFunc(loadIdxingTarget, loopIndices);
+
+  // Generate stmt for the idxingTarget scoped loops
+  for (size_t i = outputRank; i > indicesRank; --i) {
+    innerStmt = alloc<For>(
+        loopVars[i - 1],
+        immLike(outputShape[i - 1], 0),
+        outputShape[i - 1].node(),
+        innerStmt);
+  }
+
+  // Generate stmt for the indirect-indexing: x = indices[...]
+  StmtPtr loadIndirectIdxStmt = Let::make(
+      VarHandle(indirectIdxVar),
+      promoteToDtype(
+          ExprHandle(loadIndirectIdx), dtypeIndirectIdxing.scalar_type()));
+
+  // Merge the stmts of the idxing target scoped loops and the indirect-indexing
+  auto block = alloc<tensorexpr::Block>(
+      std::vector<StmtPtr>({loadIndirectIdxStmt, innerStmt}));
+
+  // Generate stmt for the indice scoped loops
+  StmtPtr outerStmt = IRSimplifier::simplify(block);
+  for (size_t i = indicesRank; i > 0; --i) {
+    outerStmt = alloc<For>(
+        loopVars[i - 1],
+        immLike(outputShape[i - 1], 0),
+        outputShape[i - 1].node(),
+        outerStmt);
+  }
+
+  return outerStmt;
+}
+
 Tensor computeTranspose(
     const std::vector<ArgValue>& inputs,
     const std::vector<ExprHandle>& outputShape,
@@ -658,73 +737,31 @@ Tensor computeEmbedding(
     const std::vector<ExprHandle>& outputStrides,
     const c10::optional<ScalarType>& outputType,
     at::Device device) {
-  Dtype output_dtype = kFloat;
-  if (outputType) {
-    output_dtype = Dtype(*outputType);
-  }
+  Dtype outputDtype = outputType.has_value() ? Dtype(*outputType) : kFloat;
+  BufHandle outputBuf("embedding", outputShape, outputStrides, outputDtype);
 
-  BufHandle output_buf("emb", outputShape, output_dtype);
-  const BufHandle& w = c10::get<BufHandle>(inputs[0]);
-  const BufHandle& indices = c10::get<BufHandle>(inputs[1]);
+  // Set the indirect-indexing params
+  size_t posOfIndices = 1;
+  size_t posOfIdxingTarget = 0;
+  size_t dimOfIndirectIdxing = 0;
 
-  auto w_dims = ExprVectorToExprHandleVector(w.node()->dims());
-  auto indices_dims = ExprVectorToExprHandleVector(indices.node()->dims());
-  auto output_rank = indices_dims.size() + 1;
+  StmtPtr st = computeIndirectIndexing(
+      posOfIndices,
+      posOfIdxingTarget,
+      dimOfIndirectIdxing,
+      inputs,
+      outputShape,
+      [&](const ExprPtr& loadIdxingTarget,
+          const std::vector<ExprPtr>& loopIndices) {
+        return alloc<Store>(
+            outputBuf.node(),
+            loopIndices,
+            promoteToDtype(
+                ExprHandle(loadIdxingTarget), outputDtype.scalar_type())
+                .node());
+      });
 
-  // Prepare for-loop vars and store indices
-  std::vector<VarPtr> for_vars(output_rank);
-  std::vector<ExprPtr> store_indices(output_rank);
-  for (int64_t i = 0; i < output_rank - 1; ++i) {
-    for_vars[i] = alloc<Var>("i_" + c10::to_string(i), indices_dims[i].dtype());
-    store_indices[i] = for_vars[i];
-  }
-  for_vars[output_rank - 1] =
-      alloc<Var>("i_" + c10::to_string(output_rank - 1), w_dims[1].dtype());
-  store_indices[output_rank - 1] = for_vars[output_rank - 1];
-
-  // Prepare load indices for weight indexing from indices tensor
-  std::vector<ExprPtr> w_idx_load_indices(indices_dims.size());
-  for (int64_t i = 0; i < indices_dims.size(); ++i) {
-    w_idx_load_indices[i] = for_vars[i];
-  }
-
-  // Generate stmt for weight indices
-  VarPtr w_idx_var = alloc<Var>("w_idx_var", w_dims[0].dtype());
-  auto load_w_idx = alloc<Load>(indices.node(), w_idx_load_indices);
-  StmtPtr w_idx_stmt = Let::make(
-      VarHandle(w_idx_var),
-      promoteToDtype(ExprHandle(load_w_idx), w_dims[0].dtype().scalar_type()));
-  auto block = alloc<tensorexpr::Block>(std::vector<StmtPtr>({w_idx_stmt}));
-
-  // Prepare load indices for weight
-  std::vector<ExprPtr> w_load_indices(2);
-  w_load_indices[0] = w_idx_var;
-  w_load_indices[1] = for_vars[output_rank - 1];
-
-  // Generate stmt for output loading together with the inner-most for-loop
-  auto load_w = promoteToDtype(
-      ExprHandle(alloc<Load>(w.node(), w_load_indices)),
-      output_dtype.scalar_type());
-  StmtPtr output_stmt =
-      alloc<Store>(output_buf.node(), store_indices, load_w.node());
-  output_stmt = alloc<For>(
-      for_vars[output_rank - 1],
-      immLike(w_dims[1], 0),
-      w_dims[1].node(),
-      output_stmt);
-  block->append_stmt(output_stmt);
-
-  // Generate the outer for-loops based on the inner-most for-loop
-  StmtPtr st = IRSimplifier::simplify(block);
-  for (size_t i = output_rank - 1; i > 0; --i) {
-    st = alloc<For>(
-        for_vars[i - 1],
-        immLike(indices_dims[i - 1], 0),
-        indices_dims[i - 1].node(),
-        st);
-  }
-
-  return Tensor(output_buf.node(), st);
+  return Tensor(outputBuf.node(), st);
 }
 
 Tensor computeEmbeddingExternalCall(
