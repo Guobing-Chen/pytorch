@@ -352,17 +352,12 @@ Tensor computeChunk(
 }
 
 StmtPtr computeIndirectIndexing(
-    size_t posOfIndices,
-    size_t posOfIdxingTarget,
+    const BufHandle& idxingTarget,
+    const BufHandle& indices,
     size_t dimOfIndirectIdxing,
-    const std::vector<ArgValue>& inputs,
     const std::vector<ExprHandle>& outputShape,
     const std::function<StmtPtr(const ExprPtr&, const std::vector<ExprPtr>&)>&
         innerStmtFunc) {
-  const BufHandle& indices = c10::get<BufHandle>(inputs[posOfIndices]);
-  const BufHandle& idxingTarget =
-      c10::get<BufHandle>(inputs[posOfIdxingTarget]);
-
   auto outputRank = outputShape.size();
   auto indicesRank = indices.node()->dims().size();
   auto dtypeIndirectIdxing =
@@ -737,19 +732,18 @@ Tensor computeEmbedding(
     const std::vector<ExprHandle>& outputStrides,
     const c10::optional<ScalarType>& outputType,
     at::Device device) {
+  const BufHandle& idxingTarget = c10::get<BufHandle>(inputs[0]);
+  const BufHandle& indices = c10::get<BufHandle>(inputs[1]);
   Dtype outputDtype = outputType.has_value() ? Dtype(*outputType) : kFloat;
   BufHandle outputBuf("embedding", outputShape, outputStrides, outputDtype);
 
-  // Set the indirect-indexing params
-  size_t posOfIndices = 1;
-  size_t posOfIdxingTarget = 0;
+  // Set the indirect-indexing param
   size_t dimOfIndirectIdxing = 0;
 
   StmtPtr st = computeIndirectIndexing(
-      posOfIndices,
-      posOfIdxingTarget,
+      idxingTarget,
+      indices,
       dimOfIndirectIdxing,
-      inputs,
       outputShape,
       [&](const ExprPtr& loadIdxingTarget,
           const std::vector<ExprPtr>& loopIndices) {
