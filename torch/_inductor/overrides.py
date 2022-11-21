@@ -110,6 +110,7 @@ class ConvUnary2d(nn.Conv2d):
                 self.attr,
                 self.scalars,
                 self.algorithm,
+                0,
             )
         return torch.ops.mkldnn._convolution_pointwise(
             input,
@@ -122,6 +123,7 @@ class ConvUnary2d(nn.Conv2d):
             self.attr,
             self.scalars,
             self.algorithm,
+            0,
         )
 
     def forward(self, input):

@@ -175,7 +175,7 @@ static inline at::MemoryFormat mkldnn_convolution_memory_format(int64_t dims, bo
    return memory_format;
 }
 
-Tensor _mkldnn_convolution(
+long mkldnn_conv_param_generation(
     const Tensor& input_t,
     const Tensor& weight_t,
     const c10::optional<Tensor>& bias_opt,
@@ -183,16 +183,12 @@ Tensor _mkldnn_convolution(
     IntArrayRef stride,
     IntArrayRef dilation,
     int64_t groups,
-    c10::string_view attr = "none",
-    torch::List<c10::optional<at::Scalar>> scalars =
-        torch::List<c10::optional<at::Scalar>>(),
-    c10::optional<c10::string_view> algorithm = c10::nullopt) {
-  ideep::attr_t op_attr = ideep::attr_t();
-  if (attr != "none") {
-    auto it = fx_fusion_attr_map().find(attr);
-    TORCH_CHECK(it != fx_fusion_attr_map().end(), "Fusion behavior undefined.");
-    op_attr = it->second(scalars, algorithm);
-  }
+    c10::string_view attr,
+    torch::List<c10::optional<at::Scalar>> scalars,
+    c10::optional<c10::string_view> algorithm) {
+  c10::impl::ExcludeDispatchKeyGuard edkg(c10::autograd_dispatch_keyset);
+  ideep::convolution_forward_params * conv_params_ptr = new ideep::convolution_forward_params;
+
   // See [Note: hacky wrapper removal for optional tensor]
   c10::MaybeOwned<Tensor> bias_maybe_owned = at::borrow_from_optional_tensor(bias_opt);
   const Tensor& bias = *bias_maybe_owned;
@@ -220,8 +216,214 @@ Tensor _mkldnn_convolution(
     output.resize_(output_sizes, memory_format);
     y = itensor_from_tensor(output);
   }
+
+  ideep::attr_t op_attr = ideep::attr_t();
+  if (attr != "none") {
+    auto it = fx_fusion_attr_map().find(attr);
+    TORCH_CHECK(it != fx_fusion_attr_map().end(), "Fusion behavior undefined.");
+    op_attr = it->second(scalars, algorithm);
+  }
+
   if (bias.defined()) {
     const ideep::tensor b = itensor_from_tensor(bias);
+    // TODO: use the prepare() with is_channels_last operand in newer ideep
+    ideep::convolution_forward::prepare(
+        *conv_params_ptr,
+        x,
+        w,
+        b,
+        {output_sizes.cbegin(), output_sizes.cend()},
+        y,
+        {stride.begin(), stride.end()},
+        {dilation.begin(), dilation.end()},
+        {padding.begin(), padding.end()},
+        {padding.begin(), padding.end()},
+        groups,
+        ideep::scale_t(),
+        ideep::scale_t(),
+        ideep::scale_t(),
+        op_attr);
+  } else {
+    // TODO: use the prepare() with is_channels_last operand in newer ideep
+    ideep::convolution_forward::prepare(
+        *conv_params_ptr,
+        x,
+        w,
+        {output_sizes.cbegin(), output_sizes.cend()},
+        y,
+        {stride.begin(), stride.end()},
+        {dilation.begin(), dilation.end()},
+        {padding.begin(), padding.end()},
+        {padding.begin(), padding.end()},
+        groups,
+        ideep::scale_t(),
+        ideep::scale_t(),
+        ideep::scale_t(),
+        op_attr);
+  }
+
+  std::cout << "[INFO]: inside mkldnn_conv_param_generation - generated conv param-" << (long)conv_params_ptr << std::endl;
+  return (long) conv_params_ptr;
+}
+
+long mkldnn_conv_param_generation_binary(
+    const Tensor& input_t,
+    const Tensor& other_t,
+    const Tensor& weight_t,
+    const c10::optional<Tensor>& bias_opt,
+    IntArrayRef padding,
+    IntArrayRef stride,
+    IntArrayRef dilation,
+    int64_t groups,
+    c10::string_view attr) {
+  c10::impl::ExcludeDispatchKeyGuard edkg(c10::autograd_dispatch_keyset);
+  ideep::convolution_forward_params * conv_params_ptr = new ideep::convolution_forward_params;
+
+  // See [Note: hacky wrapper removal for optional tensor]
+  c10::MaybeOwned<Tensor> bias_maybe_owned = at::borrow_from_optional_tensor(bias_opt);
+  const Tensor& bias = *bias_maybe_owned;
+
+  TORCH_CHECK(
+      input_t.ndimension() == 4 || input_t.ndimension() == 5,
+      "mkldnn_convolution_pointwise_binary: currently only support 2d and 3d")
+
+  // Make sure inputs have same type(device, layout, dtype), device is cpu and
+  // dtype is float or bfloat16.
+  check_mkldnn_binary_fusion_inputs(input_t, other_t, weight_t, bias);
+
+  auto output_sizes = conv_output_size(input_t.sizes(), weight_t.sizes(), padding, stride, dilation);
+  // TODO: support broadcast binary fusion.
+  TORCH_CHECK(
+      output_sizes == other_t.sizes(),
+      "Binary Fusion's inputs should have same shape");
+  // Only calling fusion path for channels_last path.
+  // TODO: OneDNN doesn't optimize well for groups > 1 case, it will be enabled
+  // at next OneDNN release.
+  bool can_be_fused =
+      groups == 1 && mkldnn_conv_use_channels_last(input_t, weight_t);
+
+  auto it_binary = fusion_binary_alg_map().find(attr);
+  TORCH_CHECK(
+      it_binary != fusion_binary_alg_map().end(), "Fusion behavior undefined.");
+  if (can_be_fused) {
+    auto memory_format =
+        mkldnn_convolution_memory_format(input_t.ndimension(), true);
+    auto input = input_t.contiguous(memory_format);
+    auto weight = weight_t.contiguous(memory_format);
+    auto other = other_t.contiguous(memory_format);
+    auto output = at::empty_like(other);
+    const ideep::tensor x = itensor_from_tensor(input);
+    const ideep::tensor w = itensor_from_tensor(weight);
+    const ideep::tensor z = itensor_from_tensor(other);
+    ideep::tensor y = itensor_from_tensor(output);
+    auto output_size = other.sizes().vec();
+    ideep::tag format_tag = ideep::tag::nhwc;
+    if (input_t.ndimension() == 5) {
+      format_tag = ideep::tag::ndhwc;
+    }
+    auto other_desc = ideep::tensor::desc(
+        output_size, get_mkldnn_dtype(weight.scalar_type()), format_tag);
+    auto op_attr = ideep::attr_t::fuse_binary(it_binary->second, other_desc);
+    if (bias.defined()) {
+      const ideep::tensor b = itensor_from_tensor(bias);
+      // TODO: use the prepare() with is_channels_last operand in newer ideep
+      ideep::convolution_forward::prepare(
+          *conv_params_ptr,
+          x,
+          w,
+          b,
+          output_size,
+          y,
+          {stride.begin(), stride.end()},
+          {dilation.begin(), dilation.end()},
+          {padding.begin(), padding.end()},
+          {padding.begin(), padding.end()},
+          groups,
+          ideep::scale_t(),
+          ideep::scale_t(),
+          ideep::scale_t(),
+          op_attr);
+    } else {
+      // TODO: use the prepare() with is_channels_last operand in newer ideep
+      ideep::convolution_forward::prepare(
+          *conv_params_ptr,
+          x,
+          w,
+          output_size,
+          y,
+          {stride.begin(), stride.end()},
+          {dilation.begin(), dilation.end()},
+          {padding.begin(), padding.end()},
+          {padding.begin(), padding.end()},
+          groups,
+          ideep::scale_t(),
+          ideep::scale_t(),
+          ideep::scale_t(),
+          op_attr);
+    }
+  } else {
+      // Fallback case, if inputs are not channels last or have different dtype,
+      // OneDNN fusion may have performance regression.
+      delete conv_params_ptr;
+      conv_params_ptr = nullptr;
+  }
+
+  std::cout << "[INFO]: inside mkldnn_conv_param_generation binary - generated conv param -" << (long)conv_params_ptr << std::endl;
+  return (long) conv_params_ptr;
+}
+
+Tensor _mkldnn_convolution(
+    const Tensor& input_t,
+    const Tensor& weight_t,
+    const c10::optional<Tensor>& bias_opt,
+    IntArrayRef padding,
+    IntArrayRef stride,
+    IntArrayRef dilation,
+    int64_t groups,
+    c10::string_view attr = "none",
+    torch::List<c10::optional<at::Scalar>> scalars =
+        torch::List<c10::optional<at::Scalar>>(),
+    c10::optional<c10::string_view> algorithm = c10::nullopt,
+    int64_t param = 0) {
+  ideep::attr_t op_attr = ideep::attr_t();
+
+  // See [Note: hacky wrapper removal for optional tensor]
+  c10::MaybeOwned<Tensor> bias_maybe_owned = at::borrow_from_optional_tensor(bias_opt);
+  const Tensor& bias = *bias_maybe_owned;
+
+  if (input_t.scalar_type() == ScalarType::BFloat16) {
+    TORCH_CHECK(mkldnn_bf16_device_check(),
+        "mkldnn_convolution: bf16 path needs the cpu support avx512bw, avx512vl and avx512dq");
+  }
+
+  if (!param) {
+    if (attr != "none") {
+      auto it = fx_fusion_attr_map().find(attr);
+      TORCH_CHECK(it != fx_fusion_attr_map().end(), "Fusion behavior undefined.");
+      op_attr = it->second(scalars, algorithm);
+    }
+    check_shape_forward(input_t, weight_t, bias, padding, stride, dilation, groups);
+  }
+
+  bool is_channels_last = mkldnn_conv_use_channels_last(input_t, weight_t);
+  auto memory_format = mkldnn_convolution_memory_format(input_t.ndimension(), is_channels_last);
+
+  auto input = input_t.is_mkldnn() ? input_t : input_t.contiguous(memory_format);
+  auto weight = weight_t.is_mkldnn() ? weight_t : weight_t.contiguous(memory_format);
+  auto output_sizes = conv_output_size(input.sizes(), weight.sizes(), padding, stride, dilation);
+  auto output = at::empty({0}, input.options());
+
+  const ideep::tensor x = itensor_from_tensor(input);
+  const ideep::tensor w = itensor_from_tensor(weight);
+
+  ideep::tensor y;
+  if (is_channels_last) {
+    output.resize_(output_sizes, memory_format);
+    y = itensor_from_tensor(output);
+  }
+  if (bias.defined()) {
+    const ideep::tensor b = itensor_from_tensor(bias);
+    if (!param) {
     ideep::convolution_forward::compute_v3(
         x,
         w,
@@ -235,7 +437,12 @@ Tensor _mkldnn_convolution(
         groups,
         is_channels_last,
         op_attr);
+    } else {
+      //std::cout<<"[INFO]: inside _mkldnn_convolution -- run with param -- with bias\n";
+      ideep::convolution_forward::compute((*(ideep::convolution_forward_params*)param), x, w, b, y);
+    }
   } else {
+    if (!param) {
     ideep::convolution_forward::compute_v3(
         x,
         w,
@@ -248,6 +455,10 @@ Tensor _mkldnn_convolution(
         groups,
         is_channels_last,
         op_attr);
+    } else {
+      //std::cout<<"[INFO]: inside _mkldnn_convolution -- run with param -- w/o bias\n";
+      ideep::convolution_forward::compute((*(ideep::convolution_forward_params*)param), x, w, y);
+    }
   }
 
   if (input.is_mkldnn()) {
@@ -282,7 +493,8 @@ Tensor mkldnn_convolution_pointwise(
     int64_t groups,
     c10::string_view attr,
     torch::List<c10::optional<at::Scalar>> scalars,
-    c10::optional<c10::string_view> algorithm) {
+    c10::optional<c10::string_view> algorithm,
+    int64_t param) {
   c10::impl::ExcludeDispatchKeyGuard edkg(c10::autograd_dispatch_keyset);
   return _mkldnn_convolution(
       input_t,
@@ -294,7 +506,8 @@ Tensor mkldnn_convolution_pointwise(
       groups,
       attr,
       scalars,
-      algorithm);
+      algorithm,
+      param);
 }
 
 Tensor mkldnn_convolution_pointwise_binary(
@@ -540,6 +753,12 @@ TORCH_LIBRARY_IMPL(mkldnn, CPU, m) {
   m.impl(
       TORCH_SELECTIVE_NAME("mkldnn::_convolution_pointwise.binary"),
       TORCH_FN(mkldnn_convolution_pointwise_binary));
+  m.impl(
+      TORCH_SELECTIVE_NAME("mkldnn::_conv_param_generation"),
+      TORCH_FN(mkldnn_conv_param_generation));
+  m.impl(
+      TORCH_SELECTIVE_NAME("mkldnn::_conv_param_generation_binary"),
+      TORCH_FN(mkldnn_conv_param_generation_binary));
 }
 
 }}  // namespace at::native

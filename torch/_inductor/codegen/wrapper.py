@@ -171,6 +171,7 @@ class WrapperCodeGen(CodeGen):
         self.prefix = IndentedBuffer()
         self.kernels = {}
         self.lines = []
+        self.onednn_param_utils_gen = False
         self.header.splice(
             f"""
                 from ctypes import c_void_p, c_long
@@ -248,6 +249,28 @@ class WrapperCodeGen(CodeGen):
         self.freed = set()
         self.write_get_cuda_stream = functools.lru_cache(None)(
             self.write_get_cuda_stream
+        )
+
+    def write_onednn_param_gen_utils(self):
+        self.header.splice(
+            f"""
+            onednn_param_cache = dict()
+            def get_onednn_conv_param(op_id, src, weight, bias, padding, stride, dilation, groups, attr, scalars, algo):
+                if op_id in onednn_param_cache:
+                    conv_param = onednn_param_cache[op_id]
+                else:
+                    conv_param = torch.ops.mkldnn._conv_param_generation(src, weight, bias, padding, stride, dilation, groups, attr, scalars, algo)
+                    onednn_param_cache[op_id] = conv_param
+                return conv_param
+            def get_onednn_conv_param_binary(op_id, src, other, weight, bias, padding, stride, dilation, groups, attr):
+                if op_id in onednn_param_cache:
+                    conv_param = onednn_param_cache[op_id]
+                else:
+                    conv_param = torch.ops.mkldnn._conv_param_generation_binary(src, other, weight, bias, padding, stride, dilation, groups, attr)
+                    onednn_param_cache[op_id] = conv_param
+                return conv_param
+
+            """
         )
 
     def write_get_cuda_stream(self, index):
