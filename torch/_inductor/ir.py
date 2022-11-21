@@ -5,6 +5,7 @@ import itertools
 import logging
 import re
 import textwrap
+import random
 from collections import OrderedDict
 from contextlib import nullcontext
 from enum import Enum
@@ -2997,6 +2998,11 @@ class Convolution(ExternKernelAlloc):
             wrapper.header.writeline(
                 f"import {config.inductor_import}.triton_ops.conv as {self.kernel}"
             )
+        if not wrapper.onednn_param_utils_gen:
+            wrapper.onednn_param_utils_gen = True
+            wrapper.write_onednn_param_gen_utils()
+        wrapper.writeline(f"{self.get_name()}_id = {random.getrandbits(32)}")
+        wrapper.writeline(f"{self.get_name()}_param = get_onednn_conv_param({self.get_name()}_id, {', '.join(self.codegen_args())})")
         wrapper.writeline(
             f"{self.get_name()} = {self.kernel}({', '.join(self.codegen_args())})"
         )
@@ -3356,8 +3362,13 @@ class ConvolutionUnary(ExternKernelAlloc):
         self.kernel = kernel
 
     def codegen(self, wrapper):
+        if not wrapper.onednn_param_utils_gen:
+            wrapper.onednn_param_utils_gen = True
+            wrapper.write_onednn_param_gen_utils()
+        wrapper.writeline(f"{self.get_name()}_id = {random.getrandbits(32)}")
+        wrapper.writeline(f"{self.get_name()}_param = get_onednn_conv_param({self.get_name()}_id, {', '.join(self.codegen_args())})")
         wrapper.writeline(
-            f"{self.get_name()} = {self.kernel}({', '.join(self.codegen_args())})"
+            f"{self.get_name()} = {self.kernel}({', '.join(self.codegen_args()) + ', ' + self.get_name() + '_param'})"
         )
 
     @classmethod
@@ -3373,6 +3384,7 @@ class ConvolutionUnary(ExternKernelAlloc):
         attr,
         scalars,
         algorithm,
+        param,
     ):
         kernel = "torch.ops.mkldnn._convolution_pointwise"
         (inputs, constant_args, kernel_layout,) = _prepare_convolution_fusion_create(
@@ -3408,6 +3420,11 @@ class ConvolutionBinary(ExternKernelAlloc):
         self.kernel = kernel
 
     def codegen(self, wrapper):
+        if not wrapper.onednn_param_utils_gen:
+            wrapper.onednn_param_utils_gen = True
+            wrapper.write_onednn_param_gen_utils()
+        wrapper.writeline(f"{self.get_name()}_id = {random.getrandbits(32)}")
+        wrapper.writeline(f"{self.get_name()}_param = get_onednn_conv_param_binary({self.get_name()}_id, {', '.join(self.codegen_args())})")
         wrapper.writeline(
             f"{self.get_name()} = {self.kernel}({', '.join(self.codegen_args())})"
         )
