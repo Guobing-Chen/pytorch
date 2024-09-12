@@ -82,6 +82,7 @@ static const OperatorSet& supported_non_eltwise_set() {
       "aten::conv2d(Tensor input, Tensor weight, Tensor? bias=None, int[2] stride=1, int[2] padding=0, int[2] dilation=1, int groups=1) -> Tensor",
       "aten::_convolution(Tensor input, Tensor weight, Tensor? bias, int[] stride, int[] padding, int[] dilation, bool transposed, int[] output_padding, int groups, bool benchmark, bool deterministic, bool cudnn_enabled, bool allow_tf32) -> Tensor",
       "aten::matmul(Tensor self, Tensor other) -> Tensor",
+      "aten::linear(Tensor input, Tensor weight, Tensor? bias=None) -> Tensor",
   };
   // clang-format on
   return supported_non_eltwise_set;

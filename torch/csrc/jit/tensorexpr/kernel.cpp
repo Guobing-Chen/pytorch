@@ -1670,6 +1670,10 @@ void TensorExprKernel::optimizeOwningGraph() {
   // Optimize the concatenation
   OptimizeCat(graph_);
 
+  GRAPH_DUMP("Before DecomposeOps:", graph_);
+  DecomposeOps(graph_);
+  GRAPH_DUMP("After DecomposeOps:", graph_);
+
   // Synchronize the symbolic strides information
   auto graph_outputs = graph_->outputs();
   TORCH_INTERNAL_ASSERT(graph_outputs.size() == _orignal_graph_outputs.size());
