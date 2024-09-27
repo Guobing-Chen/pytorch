@@ -1,4 +1,5 @@
 #include <torch/csrc/jit/tensorexpr/operators/reduction.h>
+#include <torch/csrc/jit/tensorexpr/operators/quantization.h>
 
 using namespace torch::jit::tensorexpr;
 
@@ -171,16 +172,45 @@ Tensor computeAdaptiveAvgPool2d(
   if (outputType) {
     dtype = Dtype(*outputType);
   }
-  BufHandle ResultBuf("adaptive_avgpool2d", outputShape, dtype);
+
+  auto x = c10::get<BufHandle>(inputs[0]);
+  // dummy initialization needed as for non-quant scenarios
+  ExprHandle qx_qscale = DoubleImm::make(0.0f);
+  ExprHandle qx_qzero = LongImm::make(1l);
+  int64_t qx_qdtype = -1l;
+  if (isQuantized(x)) {
+    qx_qscale = ExprHandle(x.node()->qscale());
+    qx_qzero = ExprHandle(x.node()->qzero());
+    qx_qdtype = (int64_t)immQDType(x);
+  }
+
+  auto strides = x.is_contiguous(c10::MemoryFormat::ChannelsLast)
+                       ? make_channels_last_strides(outputShape)
+                       : make_contiguous_strides(outputShape);
+
+  BufHandle ResultBuf = Buf::make(
+                              "adaptive_avgpool2d",
+                              outputShape,
+                              Dtype(*outputType),
+                              c10::nullopt, // initializer
+                              ExprVectorToExprHandleVector(strides),
+                              qx_qscale,
+                              qx_qzero);
+
   // NOLINTNEXTLINE(performance-unnecessary-copy-initialization)
   auto out_size_param = c10::get<IntList>(inputs[1]);
-  return Tensor(
-      ResultBuf.node(),
-      ExternalCall::make(
-          ResultBuf,
-          "nnc_aten_adaptive_avg_pool2d",
-          {c10::get<BufHandle>(inputs[0])},
-          c10::fmap<ExprHandle>(out_size_param)));
+  // Expand the dims as needed, to facilitate external call params processing
+  if (out_size_param.size() == 1) {out_size_param.push_back(out_size_param[0]);}
+  StmtPtr s = ExternalCall::make(
+                  ResultBuf,
+                  "nnc_aten_adaptive_avg_pool2d",
+                  {x},
+                  {qx_qscale,
+                   qx_qzero,
+                   qx_qdtype,
+                   out_size_param[0],
+                   out_size_param[1]});
+  return Tensor(ResultBuf.node(), s);
 }
 
 } // namespace tensorexpr

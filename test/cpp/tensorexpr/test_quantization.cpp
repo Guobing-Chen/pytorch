@@ -380,6 +380,45 @@ TEST_F(Quantization, UpsampleNearst2d) {
   TORCH_CHECK_EQ(check, 1);
 }
 
+TEST_F(Quantization, QuantAdaptiveAvgPool2dDequantUInt8) {
+  const auto graph_string = R"IR(
+      graph(%x : Float(4, 2, 9, 9, strides=[162, 1, 18, 2], device=cpu)):
+        %2 : int = prim::Constant[value=13]()
+        %3 : int[] = prim::Constant[value=[3, 4]]()
+        %qz : int = prim::Constant[value=53]()
+        %qs : float = prim::Constant[value=0.0543662]()
+        %q : QUInt8(4, 2, 9, 9, strides=[162, 1, 18, 2], device=cpu) = aten::quantize_per_tensor(%x, %qs, %qz, %2)
+        %qu : QUInt8(4, 2, 3, 4, strides=[24, 1, 8, 2], device=cpu) = aten::adaptive_avg_pool2d(%q, %3)
+        %6 : Float(4, 2, 3, 4, strides=[24, 1, 8, 2], device=cpu) = aten::dequantize(%qu)
+        return (%6))IR";
+  auto graph = std::make_shared<Graph>();
+  parseIR(graph_string, &*graph);
+
+  auto x = at::rand({4, 2, 9, 9}, TensorOptions(kCPU).dtype(at::kFloat));
+  x = x.contiguous(c10::MemoryFormat::ChannelsLast);
+  auto q = at::quantize_per_tensor(x, 0.0543662f, 53, at::kQUInt8);
+  auto qu = at::adaptive_avg_pool2d(q, {3, 4});
+  auto y_expected = at::dequantize(qu);
+
+  TensorExprKernel k(graph);
+  std::vector<at::Tensor> inputs = {x};
+  StmtPtr s = k.getCodeGenStmt();
+
+  std::vector<IValue> stack = fmap<IValue>(inputs);
+  k.run(stack);
+  auto y = stack[0].toTensor();
+
+  bool check = at::allclose(y_expected, y);
+  if (!check) {
+    std::cout << "x:\n" << x << std::endl;
+    std::cout << "q:\n" << q << std::endl;
+    std::cout << "qu:\n" << qu << std::endl;
+    std::cout << "y_expected:\n" << y_expected << std::endl;
+    std::cout << "y:\n" << y << std::endl;
+  }
+  CHECK_EQ(check, 1);
+}
+
 at::Tensor quantized_cat(
     c10::List<at::Tensor> const& xs,
     int64_t dim,

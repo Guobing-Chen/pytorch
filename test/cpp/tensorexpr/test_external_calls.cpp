@@ -705,8 +705,7 @@ TEST(ExternalCall, BinaryFloat) {
 TEST(ExternalCall, UnaryFloat) {
   using TensorFunc = std::function<at::Tensor(at::Tensor)>;
   auto toExprHandleVec = [](std::vector<int64_t> v) {
-    auto intV = std::vector<int>(v.begin(), v.end());
-    return std::vector<ExprHandle>(intV.begin(), intV.end());
+    return std::vector<ExprHandle>(v.begin(), v.end());
   };
   using Test = std::tuple<
       std::vector<int64_t>,
@@ -722,7 +721,7 @@ TEST(ExternalCall, UnaryFloat) {
                          return at::adaptive_avg_pool2d(x, {5, 7});
                        },
                        "nnc_aten_adaptive_avg_pool2d",
-                       toExprHandleVec({5, 7})});
+                       toExprHandleVec({0, -1, -1, 5, 7})});
   tests.push_back(Test{// NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers)
                        {100, 200},
                        {100},

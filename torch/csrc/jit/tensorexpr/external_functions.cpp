@@ -1269,23 +1269,65 @@ void nnc_aten_adaptive_avg_pool2d(
     int64_t* buf_dims,
     int64_t* buf_strides,
     int8_t* buf_dtypes,
-    int64_t args_num,
+    int64_t,
     int64_t* extra_args) {
+  const int64_t x_qdtype = extra_args[2];
+  c10::optional<std::vector<std::pair<size_t, QIData>>> qdata;
+  if (x_qdtype != -1) {
+    qdata = {{1u,
+              {((double*)extra_args)[0],
+                extra_args[1],
+                at::toQIntType(static_cast<c10::ScalarType>(x_qdtype))}}};
+  }
   auto tensors = constructTensors(
-      bufs_num, buf_data, buf_ranks, buf_dims, buf_strides, buf_dtypes);
+      bufs_num, buf_data, buf_ranks, buf_dims, buf_strides, buf_dtypes, qdata);
 
   at::Tensor& r = tensors[0];
-  const at::Tensor& x = tensors[1];
-  int64_t H = extra_args[0];
-  int64_t W = H;
-  if (args_num > 1) {
-    W = extra_args[1];
-  }
   try {
-    r = at::adaptive_avg_pool2d(x, {H, W});
+    r = at::adaptive_avg_pool2d(tensors[1], {extra_args[3], extra_args[4]});
   } catch (...) {
   }
   memcpy(buf_data[0], r.data_ptr(), r.element_size() * r.numel());
+}
+
+void nnc_aten_adaptive_avg_pool2d_out(
+    int64_t bufs_in_num,
+    void** buf_data,
+    int64_t* buf_ranks,
+    int64_t* buf_dims,
+    int64_t* buf_strides,
+    int8_t* buf_dtypes,
+    int64_t,
+    int64_t* extra_args) {
+  const int64_t x_qdtype = extra_args[2];
+  c10::optional<std::vector<std::pair<size_t, QIData>>> qdata;
+  if (x_qdtype != -1) {
+    qdata = {{1u,
+              {((double*)extra_args)[0],
+                extra_args[1],
+                at::toQIntType(static_cast<c10::ScalarType>(x_qdtype))}}};
+  }
+
+  const size_t bufs_out_num = 1u;
+  auto tensors = constructTensors2(
+      bufs_in_num,
+      buf_data,
+      buf_ranks,
+      buf_dims,
+      buf_strides,
+      buf_dtypes,
+      qdata,
+      bufs_out_num);
+
+  at::Tensor r;
+  try {
+    r = at::adaptive_avg_pool2d(tensors[1], /*{H, W}*/{extra_args[3], extra_args[4]});
+  } catch (...) {
+  }
+
+  buf_data[0] = r.data_ptr();
+  c10::raw::intrusive_ptr::incref(r.getIntrusivePtr().get());
+  buf_data[bufs_in_num + bufs_out_num] = r.getIntrusivePtr().get();
 }
 
 void nnc_aten_mean(
@@ -1593,6 +1635,9 @@ const static RegisterNNCExternalFunction nnc_conv1d_out(
 const static RegisterNNCExternalFunction nnc_adaptive_avg_pool2d(
     "nnc_aten_adaptive_avg_pool2d",
     nnc_aten_adaptive_avg_pool2d);
+const static RegisterNNCExternalFunction nnc_adaptive_avg_pool2d_out(
+    "nnc_aten_adaptive_avg_pool2d_out",
+    nnc_aten_adaptive_avg_pool2d_out);
 const static RegisterNNCExternalFunction nnc_mean(
     "nnc_aten_mean",
     nnc_aten_mean);
